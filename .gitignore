@@ -1,0 +1,7 @@
+node_modules/
+*.tar
+*.log
+test-results/
+.openai/
+.env
+.env.*

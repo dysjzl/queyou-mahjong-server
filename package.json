@@ -1,0 +1,16 @@
+{
+  "name": "queyou-mahjong",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "check": "node --check dist/app.js && node --check dist/engine.js && node --check dist/network.js && node --check dist/sw.js && node --check server.mjs && node --check server/rooms.mjs",
+    "prepare:pages": "node scripts/prepare-pages.mjs"
+  },
+  "dependencies": {
+    "ws": "^8.22.1"
+  },
+  "engines": {"node": ">=22"}
+}
