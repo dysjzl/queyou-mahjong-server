@@ -5,3 +5,4 @@ test-results/
 .openai/
 .env
 .env.*
+.queyou-state.json*

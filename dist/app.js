@@ -1,5 +1,7 @@
-import {SUITS,tileName,suitOf,createGame,chooseQue,chooseExchangeIndices,exchangeTiles,legalDiscards,bestDiscard,discard,respond,step,selfWin,concealedKongs,concealedKong,isWinning} from './engine.js';
+import {SUITS,tileName,suitOf,createGame,chooseQue,chooseExchangeIndices,exchangeTiles,legalDiscards,bestDiscard,discard,respond,step,selfWin,concealedKongs,concealedKong,addedKongs,addedKong,isWinning} from './engine.js';
 import {RoomConnection,backendURL} from './network.js';
+import {renderTileFace} from './tile-art.js';
+import {modeName,rulesLabel,roomOptions,getRoomOptions,waitsPanel,replayPanel,roundDetails,rankName} from './upgrades.js';
 
 const $=s=>document.querySelector(s);
 const icons={
@@ -35,17 +37,13 @@ if(game&&(game.version!==2||!Array.isArray(game.players)||game.players.length!==
 let view='lobby',filter='all',selected=null,hinted=null,botTimer=null,turnKey='',deadline=0,modalOpen=false,resultShown=null,toastTimer=null,installPrompt=null,audioCtx=null;
 const online=new RoomConnection();
 let practiceGame=null,onlineBusy=false,onlineChoice=[],onlineError='';
+let selectedIndex=null,replay=null,queued=false,profile=null;
 const rooms=[{id:'easy',name:'新手入门场',short:'入门',tag:'轻松上手',desc:'慢慢熟悉，一起打好第一局。',level:'新手友好',base:100,difficulty:'easy',art:['一','二','三']},{id:'normal',name:'休闲练习场',short:'休闲',tag:'人气之选',desc:'不赶时间，享受每一次摸牌。',level:'自在练习',base:200,difficulty:'normal',art:['發','發','發']},{id:'smart',name:'高手切磋场',short:'进阶',tag:'以牌会友',desc:'多想一步，和高手过过招。',level:'进阶挑战',base:500,difficulty:'smart',art:['九','九','九']}];
 
 function tile(t,classes='',button=false,disabled=false,index=-1){
-  if(t<0)return '<span class="tile hidden-tile" aria-label="暗牌"></span>';
-  const n=t%9+1,suit=suitOf(t);let face='';
-  if(suit===1){
-    const positions={1:[5],2:[2,8],3:[1,5,9],4:[1,3,7,9],5:[1,3,5,7,9],6:[1,3,4,6,7,9],7:[1,2,3,4,6,7,9],8:[1,2,3,4,6,7,8,9],9:[1,2,3,4,5,6,7,8,9]}[n];
-    face='<span class="pips">'+positions.map(pos=>`<i class="pip ${n===1?'big':''} ${[5,6,7,8,9].includes(n)&&pos%3===2?'red':''}" style="grid-column:${(pos-1)%3+1};grid-row:${Math.floor((pos-1)/3)+1}"></i>`).join('')+'</span>';
-  }else face=`<span class="num">${['一','二','三','四','五','六','七','八','九'][n-1]}</span><span class="suit-char">${SUITS[suit]}</span>`;
+  if(t<0)return '<span class="tile classic-tile hidden-tile" aria-label="暗牌"></span>';
   const tag=button?'button':'span';
-  return `<${tag} class="tile ${suit===2?'bamboo':''} ${classes}" ${button?`data-tile="${t}" data-index="${index}" ${disabled?'disabled':''}`:''} aria-label="${tileName(t)}" ${button?'title="'+tileName(t)+'"':''}>${face}</${tag}>`;
+  return `<${tag} class="tile classic-tile ${classes}" ${button?`data-tile="${t}" data-index="${index}" ${disabled?'disabled':''}`:''} aria-label="${tileName(t)}" ${button?'title="'+tileName(t)+'"':''}>${renderTileFace(t)}</${tag}>`;
 }
 function toast(text){$('#toast').textContent=text;$('#toast').classList.add('visible');clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('#toast').classList.remove('visible'),2800);}
 function sound(kind='tile'){
@@ -78,65 +76,71 @@ function renderLobby(){
   <div class="rooms">${rooms.filter(r=>filter==='all'||(filter==='smart'?r.id==='smart':r.id!=='smart')).map((r)=>`<article class="room-card"><div class="room-art room-art-${rooms.indexOf(r)+1}"><span class="room-tag">${r.tag}</span><span class="room-art-label">${r.short}</span><div class="mini-tiles" aria-hidden="true">${r.art.map(s=>`<span class="mini-tile">${s}</span>`).join('')}</div></div><div class="room-info"><div class="room-title-row"><h3>${r.name}</h3><span>${r.level}</span></div><p>${r.desc}</p><div class="room-bottom"><span class="room-stake"><b>${r.base}</b>底分</span><button class="room-enter" data-room="${r.id}">入座开局 ${icon('arrow')}</button></div></div></article>`).join('')}</div>
   <div class="bottom-grid"><section class="compact-panel"><div class="panel-title">${icon('chart')}我的麻将时光<button data-view="records">查看战绩 ↗</button></div><div class="stats-row"><div class="stat"><b>${stats.games}</b><span>累计对局</span></div><div class="stat"><b>${stats.games?Math.round(stats.wins/stats.games*100):0}<small style="font-size:12px">%</small></b><span>胡牌率</span></div><div class="stat"><b>${fmt(stats.best)}</b><span>单局最高积分</span></div></div></section><section class="compact-panel guide-panel"><div class="guide-badge" aria-hidden="true">胡</div><div class="guide-copy"><h3>第一局？我们陪你慢慢来。</h3><p>认识定缺、碰杠胡，三分钟轻松入门。<br>不用着急，每位高手都是从新手开始。</p></div><button data-view="rules" aria-label="查看玩法指南">${icon('arrow')}</button></section></div>`;
 }
-function playerPanel(p,pos){const seat=game.online?online.room?.seats[p.id]:null;return `<div class="player player-${pos} ${game.current===p.id&&game.phase==='discard'?'active':''}"><span class="avatar ${p.id===0?'avatar-me':'avatar-'+p.id}">${game.online?esc(p.name.slice(0,1)):p.id===0?esc(settings.name.slice(0,1)):['','满','川','米'][p.id]}</span><div class="player-info"><strong>${p.id===0?'你':esc(p.name)}${p.id===0&&!game.online?'<span class="que-badge">庄</span>':''}${p.que>=0?`<span class="que-badge">缺${SUITS[p.que]}</span>`:''}${seat?.auto?'<span class="que-badge">托管</span>':seat&&!seat.connected?'<span class="que-badge">离线</span>':''}</strong><span class="player-score">${signed(p.score)} 分 ${p.win?`<span class="win-badge">${p.win.rank}胡</span>`:''}</span></div></div>`;}
-function playerBacks(p,pos){return `<div class="backs backs-${pos}" aria-label="${p.name}剩余${p.hand.length}张暗牌，${p.melds.length}组副露">${p.win?'':Array.from({length:p.hand.length},()=>'<span class="back-tile"></span>').join('')}${p.melds.map(m=>`<span class="opponent-group" title="${m.kind==='concealed'?'暗杠':m.kind==='kong'?'直杠':'碰'}${tileName(m.tiles[0])}">${m.tiles.map(t=>tile(t)).join('')}</span>`).join('')}</div>`;}
-function playerDiscards(p,pos){const recent=p.discards.slice(-18);return `<div class="discard-zone discard-${pos}" aria-label="${p.name}的牌河">${recent.map((t,i)=>tile(t,game.lastDiscard?.from===p.id&&game.lastDiscard?.tile===t&&i===recent.length-1?'last-tile':'')).join('')}</div>`;}
+function playerPanel(p,pos){const seat=game.online?online.room?.seats[p.id]:null;return `<div class="player player-${pos} ${game.current===p.id&&game.phase==='discard'?'active':''}"><span class="avatar ${p.id===0?'avatar-me':'avatar-'+p.id}">${game.online?esc(p.name.slice(0,1)):p.id===0?esc(settings.name.slice(0,1)):['','满','川','米'][p.id]}</span><div class="player-info"><strong>${p.id===0?'你':esc(p.name)}${p.id===(game.dealer??0)?'<span class="que-badge">庄</span>':''}${p.que>=0?`<span class="que-badge">缺${SUITS[p.que]}</span>`:''}${seat?.bot?'<span class="que-badge">电脑</span>':seat?.auto?'<span class="que-badge">托管</span>':seat&&!seat.connected?'<span class="que-badge">离线</span>':''}</strong><span class="player-score">${signed(p.score)} 分 ${p.win?`<span class="win-badge">${p.win.count>1?p.win.count+'次':p.win.rank}胡</span>`:''}</span></div></div>`;}
+function playerBacks(p,pos){return `<div class="backs backs-${pos}" aria-label="${esc(p.name)}剩余${p.hand.length}张暗牌，${p.melds.length}组副露">${p.win&&game.rules?.mode!=='flow'?'':Array.from({length:p.hand.length},()=>'<span class="back-tile"></span>').join('')}${p.melds.map(m=>`<span class="opponent-group" title="${m.kind==='concealed'?'暗杠':m.kind==='kong'?'直杠':'碰'}${tileName(m.tiles[0])}">${m.tiles.map(t=>tile(t)).join('')}</span>`).join('')}</div>`;}
+function playerDiscards(p,pos){const recent=p.discards.slice(-18);return `<div class="discard-zone discard-${pos}" aria-label="${esc(p.name)}的牌河">${recent.map((t,i)=>tile(t,game.lastDiscard?.from===p.id&&game.lastDiscard?.tile===t&&i===recent.length-1?'last-tile':'')).join('')}</div>`;}
 function meldDisplay(p,extra=''){return `<div class="${extra||'melds'}" aria-label="副露">${p.melds.map(m=>`<div class="meld" title="${m.kind==='concealed'?'暗杠':m.kind==='kong'?'直杠':'碰牌'}">${m.tiles.map(t=>tile(t)).join('')}</div>`).join('')}</div>`;}
 function renderGame(){
   if(!game){view='lobby';render();return;}
-  selected=null;
-  const g=game,me=g.players[0],myTurn=g.current===0&&g.phase==='discard'&&!me.win;
+  const g=game,me=g.players[0],myTurn=g.current===0&&g.phase==='discard'&&(!me.win||g.rules?.mode==='flow');
   const isAuto=g.online?online.room?.seats[0]?.auto:settings.auto;
-  const legal=myTurn?legalDiscards(g):[];const canHu=myTurn&&isWinning(me.hand,me.melds,me.que);const kongs=myTurn?concealedKongs(g):[];
+  const legal=myTurn?legalDiscards(g):[];
+  const canHu=myTurn&&!g.justClaimed&&isWinning(me.hand,me.melds,me.que);
+  const kongs=myTurn?concealedKongs(g):[],additions=myTurn?addedKongs(g):[];
   const key=`${g.id}:${g.turn}:${g.phase}:${g.current}:${g.sequence}`;
-  if(turnKey!==key){turnKey=key;deadline=Date.now()+25000;selected=null;hinted=null;}
+  if(turnKey!==key){turnKey=key;deadline=Date.now()+25000;selected=null;selectedIndex=null;hinted=null;}
   if(g.online)deadline=(online.receivedAt||Date.now())+Math.max(0,(online.room?.deadline||0)-(online.room?.serverNow||0));
-  const status=g.phase==='finished'?'本局已结束':g.phase==='exchange'?'选三张同花色的牌，换一手好牌':g.phase==='exchange-wait'?'已提交换牌，等待其他牌友':g.phase==='que-wait'?'已定缺，等待其他牌友':g.phase==='waiting'?'等待牌友响应碰杠胡':g.phase==='que'?'请选择定缺花色':g.phase==='claim'?`可${g.pending.kind==='win'?'胡牌':'碰杠'}，请选择操作`:me.win?'你已胡牌，观战中':myTurn?'点击选牌，再点一次打出':'牌友思考中…';
+  const status=g.phase==='finished'?'本局已结束':g.phase==='exchange'?'选择三张同花色的牌':g.phase==='exchange-wait'?'已换牌 · 等待其他牌友':g.phase==='que-wait'?'已定缺 · 等待其他牌友':g.phase==='waiting'?'等待牌友响应碰杠胡':g.phase==='que'?'请选择定缺花色':g.phase==='claim'?(g.pending.rob||g.pending.context?.rob?'可抢杠胡':`${tileName(g.pending.tile)}可${g.pending.kind==='win'?'胡牌':'碰杠'}，请选择操作`):myTurn?'点击选牌，再点一次打出':me.win&&g.rules?.mode!=='flow'?'你已胡牌，观战中':`${g.players[g.current].name}正在出牌`;
   let drawnIndex=-1;if(myTurn&&g.lastDraw!==null)drawnIndex=me.hand.lastIndexOf(g.lastDraw);
-  const actions=g.phase==='claim'?`${g.pending.options.map(a=>`<button class="action-button ${a==='hu'?'hu':''}" data-claim="${a}">${{pong:'碰',kong:'杠',hu:'胡'}[a]}</button>`).join('')}<button class="action-button pass" data-claim="pass">过</button>`:`${canHu?'<button class="action-button hu" data-action="hu">胡</button>':''}${kongs.map(t=>`<button class="action-button" data-kong="${t}" title="暗杠${tileName(t)}">杠</button>`).join('')}`;
-  $('#main').innerHTML=`<div class="game-toolbar"><div class="game-title"><button class="back-button" data-view="lobby" aria-label="保存并返回大厅">${icon('back')}</button><h1>${g.room}</h1><span class="practice-label" id="connection-status">${g.online?connectionLabel():"单机 · 智能牌友"}</span></div><div class="game-toolbar-right"><span class="room-detail">四川血战 · ${g.base} 底分</span><button data-action="quick-rules">${icon('help')}规则</button><button data-action="fullscreen" aria-label="全屏牌桌">${icon('expand')}</button></div></div>
-  <div class="game-layout"><div class="table-wrap"><section class="table" aria-label="四川麻将牌桌"><span class="turn-pill">血战到底 · 第 ${g.turn} 手</span><div class="table-logo"><strong>雀友</strong><small>MAHJONG CLUB</small></div>${playerPanel(g.players[2],'north')}${playerPanel(g.players[1],'east')}${playerPanel(g.players[3],'west')}${playerPanel(me,'south')}${playerBacks(g.players[2],'north')}${playerBacks(g.players[1],'east')}${playerBacks(g.players[3],'west')}${playerDiscards(g.players[2],'north')}${playerDiscards(g.players[1],'east')}${playerDiscards(g.players[3],'west')}${playerDiscards(me,'south')}
-  <div class="compass" aria-label="余牌${g.wall.length}张"><span class="north ${g.current===2?'active':''}">西</span><span class="east ${g.current===1?'active':''}">南</span><span class="south ${g.current===0?'active':''}">东</span><span class="west ${g.current===3?'active':''}">北</span><span class="wall-count">${g.wall.length}</span></div><div class="table-watermark">余牌 · ${g.winners.length} / 3 家已胡</div>${meldDisplay(me)}
-  <div class="timer-pill">${icon('clock')}<span id="turn-status">${esc(status)}</span>${(myTurn||g.phase==='claim')?'<b id="countdown">25</b>':''}</div>
+  const actions=g.phase==='claim'?`${g.pending.options.map(a=>`<button class="action-button ${a==='hu'?'hu':''}" data-claim="${a}">${{pong:'碰',kong:'杠',hu:'胡'}[a]}</button>`).join('')}<button class="action-button pass" data-claim="pass">过</button>`:`${canHu?'<button class="action-button hu" data-action="hu">胡</button>':''}${additions.map(t=>`<button class="action-button" data-added="${t}" title="补杠${tileName(t)}">补杠</button>`).join('')}${kongs.map(t=>`<button class="action-button" data-kong="${t}" title="暗杠${tileName(t)}">杠</button>`).join('')}`;
+  $('#main').innerHTML=`<div class="game-toolbar"><div class="game-title"><button class="back-button" data-view="lobby" aria-label="保存并返回大厅">${icon('back')}</button><h1>${g.room}</h1><span class="practice-label" id="connection-status">${g.online?connectionLabel():"单机 · 智能牌友"}</span></div><div class="game-toolbar-right"><span class="room-detail" title="${rulesLabel(g.rules)}">${modeName(g.rules)} · ${g.base} 底分</span><button data-action="quick-rules">${icon('help')}规则</button><button data-action="fullscreen" aria-label="全屏牌桌">${icon('expand')}</button></div></div>
+  <div class="game-layout"><div class="table-wrap"><section class="table" data-meld-count="${me.melds.length}" aria-label="四川麻将牌桌"><span class="turn-pill">${g.online&&online.room?.round?'第 '+online.room.round+'/'+online.room.rounds+' 局 · ':''}${modeName(g.rules)} · 第 ${g.turn} 手</span><div class="table-logo"><strong>雀友</strong><small>MAHJONG CLUB</small></div>${playerPanel(g.players[2],'north')}${playerPanel(g.players[1],'east')}${playerPanel(g.players[3],'west')}${playerPanel(me,'south')}${playerBacks(g.players[2],'north')}${playerBacks(g.players[1],'east')}${playerBacks(g.players[3],'west')}${playerDiscards(g.players[2],'north')}${playerDiscards(g.players[1],'east')}${playerDiscards(g.players[3],'west')}${playerDiscards(me,'south')}
+  <div class="compass" aria-label="余牌${g.wall.length}张"><span class="north ${g.current===2?'active':''}">西</span><span class="east ${g.current===1?'active':''}">南</span><span class="south ${g.current===0?'active':''}">东</span><span class="west ${g.current===3?'active':''}">北</span><span class="wall-count">${g.wall.length}</span></div><div class="table-watermark">余牌 · ${g.rules?.mode==='flow'?g.winners.length+' 家已胡':g.winners.length+' / 3 家已胡'}</div>${meldDisplay(me)}
+  <div class="timer-pill">${icon('clock')}<span id="turn-status">${esc(status)}</span>${g.online&&g.phase!=='finished'||myTurn||g.phase==='claim'?`<b id="countdown">${Math.max(0,Math.ceil((deadline-Date.now())/1000))}</b>`:''}</div>
   <div class="action-bar">${g.phase==='finished'?'<button class="action-button" data-action="result">查看结算</button>':actions}</div>
   <div class="hand-notice">${me.win?`${me.win.labels.join(' · ')} · 恭喜胡牌`:myTurn&&me.hand.some(t=>suitOf(t)===me.que)?`先打完${SUITS[me.que]}子，再安心做牌`:'定缺不吃牌 · 好牌慢慢来'}</div>
-  <div class="hand-zone"><div class="hand" aria-label="你的手牌">${me.hand.map((t,i)=>tile(t,`${!legal.includes(t)&&myTurn?'illegal':''} ${suitOf(t)===me.que?'que-tile':''} ${i===drawnIndex?'drawn':''} ${g.phase==='exchange'&&g.exchangeSelection.includes(i)?'selected':''}`,true,!myTurn&&g.phase!=='exchange',i)).join('')}</div></div>
-  ${g.phase==='que'?renderQue():g.phase==='exchange'?renderExchange():''}</section><div class="game-controls"><div class="control-group"><button data-action="hint">${icon('spark')}提示</button><button data-action="sort">${icon('sort')}理牌</button><button class="${isAuto?'on':''}" data-action="auto" aria-pressed="${isAuto}">${icon('auto')}托管${isAuto?'中':''}</button></div><span>积分实时结算 · 可随时返回大厅</span></div></div>
-  <aside class="game-side"><section class="match-info"><h3>这一桌的时光</h3><div class="match-stat"><span>玩法</span><b>四川 · 血战到底</b></div><div class="match-stat"><span>底分</span><b>${g.base} 分</b></div><div class="match-stat"><span>你的定缺</span><b>${me.que<0?'待选择':SUITS[me.que]+'子'}</b></div><div class="match-stat"><span>已胡牌</span><b>${g.winners.length} / 3 人</b></div><p class="info-note">${g.online?"四位真人同步对局。<br>断线后会自动恢复座位。":"三位牌友均由电脑操作。<br>虚拟积分只记录在当前设备。"}</p></section><section class="log-panel"><h3>牌桌动态</h3>${g.events.slice(0,8).map(e=>`<div class="event ${e.type}">${esc(e.text)}</div>`).join('')}</section></aside></div>`;
+  <div class="hand-zone"><div class="hand" aria-label="你的手牌">${me.hand.map((t,i)=>tile(t,`${!legal.includes(t)&&myTurn?'illegal':''} ${suitOf(t)===me.que?'que-tile':''} ${i===drawnIndex?'drawn fresh-draw':''} ${i===selectedIndex?'selected':''} ${hinted===t?'hinted':''} ${g.phase==='exchange'&&g.exchangeSelection.includes(i)?'selected':''}`,true,!myTurn&&g.phase!=='exchange',i)).join('')}</div></div>
+  ${g.phase==='que'?renderQue():g.phase==='exchange'?renderExchange():''}</section><div class="game-controls"><div class="control-group">${!g.online?'<button data-action="waits" class="wait-button" title="听牌提示" aria-label="听牌提示">听</button>':''}<button data-action="hint" title="出牌提示">${icon('spark')}提示</button><button data-action="sort" title="整理手牌">${icon('sort')}理牌</button><button class="${isAuto?'on':''}" data-action="auto" aria-pressed="${isAuto}">${icon('auto')}托管${isAuto?'中':''}</button></div><span>积分实时结算 · 可随时返回大厅</span></div></div>
+  <aside class="game-side"><section class="match-info"><h3>这一桌的时光</h3><div class="match-stat"><span>玩法</span><b>${rulesLabel(g.rules)}</b></div><div class="match-stat"><span>底分</span><b>${g.base} 分</b></div><div class="match-stat"><span>你的定缺</span><b>${me.que<0?'待选择':SUITS[me.que]+'子'}</b></div><div class="match-stat"><span>已胡牌</span><b>${g.winners.length} / 3 人</b></div><p class="info-note">${g.online?"联机同桌对局。<br>断线后可回到原座位。":"三位牌友均由电脑操作。<br>虚拟积分只记录在当前设备。"}</p></section><section class="log-panel"><h3>牌桌动态</h3>${g.events.slice(0,8).map(e=>`<div class="event ${e.type}">${esc(e.text)}</div>`).join('')}</section></aside></div>`;
   persistGame();
   if(g.phase==='finished'){commitResult();if(resultShown!==g.id){resultShown=g.id;setTimeout(showResult,450);}}
 }
 function renderExchange(){return `<div class="que-overlay exchange-overlay"><div class="que-dialog"><div class="eyebrow">A FRESH START</div><h2>换三张，换个好手气。</h2><p>点击下方手牌，选择三张同花色的牌。<br>所有玩家按本局随机方向同时交换。</p><div class="exchange-counter"><b id="exchange-count">${game.exchangeSelection.length}</b> / 3 张已选</div><button class="primary-button" data-action="exchange" id="exchange-confirm" ${game.exchangeSelection.length===3?'':'disabled'}>确认换牌 ${icon('arrow')}</button><button class="text-button" data-action="exchange-hint">帮我选三张</button></div></div>`;}
 function renderQue(){const me=game.players[0],c=[0,1,2].map(s=>me.hand.filter(t=>suitOf(t)===s).length),min=Math.min(...c);return `<div class="que-overlay"><div class="que-dialog"><div class="eyebrow">A GOOD START</div><h2>先定缺，再出发。</h2><p>选择一种花色，本局优先打完它。<br>建议选择手中数量最少的一门。</p><div class="que-options">${c.map((n,i)=>`<button class="que-option ${n===min?'recommended':''}" data-que="${i}">${tile(i*9+4)}<span>${SUITS[i]}子 · ${n} 张</span><small>${n===min?'推荐选择':''}</small></button>`).join('')}</div><div class="que-hand-preview">下方手牌可查看 · 108 张牌 · 无字牌</div></div></div>`;}
 function renderRecords(){
-  $('#main').innerHTML=`<div class="page-heading"><div><div class="eyebrow">EVERY HAND TELLS A STORY</div><h1>记下每一局好时光。</h1><p>战绩保存在当前浏览器，记录你的每一次进步。</p></div><button class="secondary-button" data-view="lobby">回大厅</button></div><div class="compact-panel" style="margin-bottom:24px"><div class="stats-row" style="margin:0"><div class="stat"><b>${stats.games}</b><span>累计对局</span></div><div class="stat"><b>${stats.wins}</b><span>胡牌对局</span></div><div class="stat"><b>${stats.games?Math.round(stats.wins/stats.games*100):0}%</b><span>胡牌率</span></div><div class="stat"><b>${fmt(stats.best)}</b><span>最高单局积分</span></div></div></div>${records.length?`<div class="record-list">${records.map(r=>`<article class="record-row"><div class="record-icon">${r.won?'胡':'雀'}</div><div><h3>${esc(r.room)} · ${r.reason==='leave'?'提前结束':r.won?'好牌入手':r.reason==='wall'?'牌墙摸尽':'血战结束'}</h3><p>${new Date(r.at).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})} · ${r.turn} 手 · ${r.duration} 分钟</p></div><span class="record-rank">${r.won?'第 '+r.rank+' 家胡牌':'下局再接再厉'}</span><b class="record-score ${r.score<0?'negative':''}">${signed(r.score)}</b></article>`).join('')}</div><p class="about-note">仅展示最近 50 局。累计数据会持续保留。</p>`:`<div class="empty-state">${icon('trophy')}<h2>第一段故事，等你开局。</h2><p>打完一局，你的战绩就会出现在这里。</p><button class="primary-button" data-room="easy">来一局试试 ${icon('arrow')}</button></div>`}`;
+  $('#main').innerHTML=`<div class="page-heading"><div><div class="eyebrow">EVERY HAND TELLS A STORY</div><h1>记下每一局好时光。</h1><p>战绩保存在当前浏览器，记录你的每一次进步。</p></div><button class="secondary-button" data-view="lobby">回大厅</button></div><div class="compact-panel" style="margin-bottom:24px"><div class="stats-row" style="margin:0"><div class="stat"><b>${stats.games}</b><span>累计对局</span></div><div class="stat"><b>${stats.wins}</b><span>胡牌对局</span></div><div class="stat"><b>${stats.games?Math.round(stats.wins/stats.games*100):0}%</b><span>胡牌率</span></div><div class="stat"><b>${fmt(stats.best)}</b><span>最高单局积分</span></div></div></div>${records.length?`<div class="record-list">${records.map(r=>`<article class="record-row"><div class="record-icon">${r.won?'胡':'雀'}</div><div><h3>${esc(r.room)} · ${r.reason==='leave'?'提前结束':r.won?'好牌入手':r.reason==='wall'?'牌墙摸尽':'血战结束'}</h3><p>${new Date(r.at).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})} · ${r.turn} 手 · ${r.duration} 分钟</p></div><span class="record-rank">${r.won?'第 '+r.rank+' 家胡牌':'下局再接再厉'}</span><button class="text-button" data-replay-id="${esc(r.id)}" data-remote="${!!r.online}">牌谱</button><b class="record-score ${r.score<0?'negative':''}">${signed(r.score)}</b></article>`).join('')}</div><p class="about-note">仅展示最近 50 局。累计数据会持续保留。</p>`:`<div class="empty-state">${icon('trophy')}<h2>第一段故事，等你开局。</h2><p>打完一局，你的战绩就会出现在这里。</p><button class="primary-button" data-room="easy">来一局试试 ${icon('arrow')}</button></div>`}`;
 }
 function renderRules(){
-  $('#main').innerHTML=`<div class="page-heading"><div><div class="eyebrow">A LITTLE GUIDE, A LOT OF FUN</div><h1>好上手，才好玩。</h1><p>雀友练习版 · 四川血战规则</p></div><button class="primary-button" data-room="easy">练习一局 ${icon('arrow')}</button></div><div class="rules-layout"><section class="rules-card"><h2>四步，打好第一局。</h2>${[['换三张，再定缺','共 108 张牌，只有万、筒、条。先选三张同花色牌，按随机方向同时交换，再选择一门定缺。必须先打完缺门牌；缺门未清时不能碰、杠、胡。'],['轮流摸打','你坐庄先出牌，随后按你 → 小满 → 阿川 → 米粒的顺序轮转。点击手牌选中，再点一次打出；25 秒未操作会自动处理。'],['看准碰、杠、胡','两张同牌可以碰，三张同牌可接直杠，四张同牌可暗杠。不吃牌。杠后补一张牌；他家胡牌优先于碰杠，可一炮多响。'],['胡牌后继续血战','通常以四组顺子或刻子加一对将牌胡牌，也支持七对。胡牌玩家退出后续摸打；三家胡牌或牌墙摸尽时结束。流局将查花猪、退还未听牌玩家收取的杠分，再查大叫。']].map(([h,p],i)=>`<div class="rule-step"><span class="step-number">0${i+1}</span><div><h3>${h}</h3><p>${p}</p></div></div>`).join('')}<div class="rule-note">提示按钮会建议保留对子、顺子和搭子。高手场的智能牌友还会评估听牌机会。定缺阶段选择数量最少的一门，通常更容易起手。</div></section><aside class="rules-card"><h2>积分，明明白白。</h2><table class="scoring-table"><tbody><tr><td>平胡</td><td>0 番 · 1 倍底分</td></tr><tr><td>碰碰胡</td><td>+1 番</td></tr><tr><td>七对 / 清一色 / 带幺九</td><td>各 2 番</td></tr><tr><td>将对 / 龙七对</td><td>3 番起</td></tr><tr><td>将七对</td><td>4 番</td></tr><tr><td>金钩钓 / 每一根</td><td>+1 番</td></tr><tr><td>自摸</td><td>+1 番</td></tr><tr><td>暗杠</td><td>每家付 2 倍底分</td></tr><tr><td>直杠</td><td>出牌者付 2 倍底分</td></tr></tbody></table><p>每番翻倍，胡牌最高 5 番（32 倍底分）。点炮由出牌者付分，自摸由尚未胡牌的其他玩家付分。</p><div class="rule-note">查大叫：未听牌且非花猪的玩家，向每位听牌玩家支付其可胡的最高番数，不含自摸加番。查花猪：仍有缺门牌者向每位非花猪玩家付 16 倍底分。未听牌或花猪玩家退还本局收取的杠分。已胡玩家不参与查大叫。积分可为负数，不影响开局。</div><details class="fan-reference"><summary>将对、幺九等牌型怎么判？</summary><p>将对：全部由二、五、八组成的碰碰胡，基础 3 番。带幺九：每组顺刻以及将牌均含一或九，基础 2 番；不会与碰碰胡重复计基础番。七对基础 2 番，每个四张相同牌再加 1 番，称龙七对；全由二五八组成的七对为将七对，基础 4 番。清一色再加 2 番，金钩钓再加 1 番。除七对的龙根外，每组四张同牌算一根加 1 番。</p></details><div class="rule-note">本版采用上述公开计分约定，不含加杠、抢杠、天地胡、海底或杠上花等额外加番。不同地方规则可能不同。</div><p>操作快捷键：Enter 打出选中的牌；Esc 关闭弹窗。大厅可保存并继续未完成的牌局。</p></aside></div>`;
+  $('#main').innerHTML=`<div class="page-heading"><div><div class="eyebrow">A LITTLE GUIDE, A LOT OF FUN</div><h1>好上手，才好玩。</h1><p>雀友练习版 · 四川血战规则</p></div><button class="primary-button" data-room="easy">练习一局 ${icon('arrow')}</button></div><div class="rules-layout"><section class="rules-card"><h2>四步，打好第一局。</h2>${[['换三张，再定缺','共 108 张牌，只有万、筒、条。先选三张同花色牌，按随机方向同时交换，再选择一门定缺。必须先打完缺门牌；缺门未清时不能碰、杠、胡。'],['轮流摸打','你坐庄先出牌，随后按你 → 小满 → 阿川 → 米粒的顺序轮转。点击手牌选中，再点一次打出；25 秒未操作会自动处理。'],['看准碰、杠、胡','两张同牌可以碰，三张同牌可接直杠，四张同牌可暗杠；碰过后可补杠，其他玩家可抢杠胡。不吃牌。杠后补一张牌；他家胡牌优先于碰杠，可一炮多响。'],['胡牌后继续血战','通常以四组顺子或刻子加一对将牌胡牌，也支持七对。胡牌玩家退出后续摸打；三家胡牌或牌墙摸尽时结束。流局将查花猪、退还未听牌玩家收取的杠分，再查大叫。']].map(([h,p],i)=>`<div class="rule-step"><span class="step-number">0${i+1}</span><div><h3>${h}</h3><p>${p}</p></div></div>`).join('')}<div class="rule-note">提示按钮会建议保留对子、顺子和搭子。高手场的智能牌友还会评估听牌机会。定缺阶段选择数量最少的一门，通常更容易起手。</div></section><aside class="rules-card"><h2>积分，明明白白。</h2><table class="scoring-table"><tbody><tr><td>平胡</td><td>0 番 · 1 倍底分</td></tr><tr><td>碰碰胡</td><td>+1 番</td></tr><tr><td>七对 / 清一色 / 带幺九</td><td>各 2 番</td></tr><tr><td>将对 / 龙七对</td><td>3 番起</td></tr><tr><td>将七对</td><td>4 番</td></tr><tr><td>金钩钓 / 每一根</td><td>+1 番</td></tr><tr><td>自摸</td><td>+1 番</td></tr><tr><td>暗杠</td><td>每家付 2 倍底分</td></tr><tr><td>直杠</td><td>出牌者付 2 倍底分</td></tr></tbody></table><p>每番翻倍，胡牌最高 5 番（32 倍底分）。点炮由出牌者付分，自摸由尚未胡牌的其他玩家付分。</p><div class="rule-note">查大叫：未听牌且非花猪的玩家，向每位听牌玩家支付其可胡的最高番数，不含自摸加番。查花猪：仍有缺门牌者向每位非花猪玩家付 16 倍底分。未听牌或花猪玩家退还本局收取的杠分。已胡玩家不参与查大叫。积分可为负数，不影响开局。</div><details class="fan-reference"><summary>将对、幺九等牌型怎么判？</summary><p>将对：全部由二、五、八组成的碰碰胡，基础 3 番。带幺九：每组顺刻以及将牌均含一或九，基础 2 番；不会与碰碰胡重复计基础番。七对基础 2 番，每个四张相同牌再加 1 番，称龙七对；全由二五八组成的七对为将七对，基础 4 番。清一色再加 2 番，金钩钓再加 1 番。除七对的龙根外，每组四张同牌算一根加 1 番。</p></details><div class="rule-note">杠上花、杠上炮、抢杠胡及海底各加一番。默认 5 番封顶，房主可改封顶、杠分、是否换牌和自摸口径。血流成河允许同一玩家多次胡牌，首次胡后锁定手牌，继续摸打至牌墙耗尽。</div><p>操作快捷键：Enter 打出选中的牌；Esc 关闭弹窗。大厅可保存并继续未完成的牌局。</p></aside></div>`;
 }
 function toggleSetting(key){settings[key]=!settings[key];write('settings',settings);render();}
 function renderSettings(){
-  $('#main').innerHTML=`<div class="page-heading"><div><div class="eyebrow">MAKE YOURSELF AT HOME</div><h1>玩得自在一点。</h1><p>按自己的节奏，调好这一桌。</p></div></div><section class="settings-card"><div class="setting-row"><div><h3>牌桌昵称</h3><p>给自己起个好听的名字，最多 10 个字。</p></div><input class="settings-input" id="nickname" aria-label="牌桌昵称" maxlength="10" value="${esc(settings.name)}"></div><div class="setting-row"><div><h3>牌桌音效</h3><p>出牌、开局与胡牌时的一点小仪式感。</p></div><button class="toggle ${settings.sound?'on':''}" data-setting="sound" aria-label="牌桌音效" role="switch" aria-checked="${settings.sound}"></button></div><div class="setting-row"><div><h3>对局节奏</h3><p>调整电脑牌友的思考时间。</p></div><select class="select-control" id="speed" aria-label="对局节奏">${[['slow','慢慢来'],['normal','刚刚好'],['fast','快一点']].map(([v,t])=>`<option value="${v}" ${settings.speed===v?'selected':''}>${t}</option>`).join('')}</select></div><div class="setting-row"><div><h3>自动托管</h3><p>电脑代你打牌，可在牌桌上随时关闭。</p></div><button class="toggle ${settings.auto?'on':''}" data-setting="auto" aria-label="自动托管" role="switch" aria-checked="${settings.auto}"></button></div><div class="setting-row"><div><h3>安装到主屏幕</h3><p>像 App 一样打开。首次加载完成后可离线练习。</p></div><button class="secondary-button" data-action="install">安装指引 ↗</button></div></section><p class="about-note">雀友 v2.0 · 原创界面与牌面，参考休闲麻将游戏的交互习惯。<br>数据仅存储在当前浏览器，清除浏览器数据后将重置。${storageAvailable?'':'当前浏览器不支持持久保存，数据只在本次打开期间保留。'}</p>`;
+  $('#main').innerHTML=`<div class="page-heading"><div><div class="eyebrow">MAKE YOURSELF AT HOME</div><h1>玩得自在一点。</h1><p>按自己的节奏，调好这一桌。</p></div></div><section class="settings-card"><div class="setting-row"><div><h3>牌桌昵称</h3><p>给自己起个好听的名字，最多 10 个字。</p></div><input class="settings-input" id="nickname" aria-label="牌桌昵称" maxlength="10" value="${esc(settings.name)}"></div><div class="setting-row"><div><h3>牌桌音效</h3><p>出牌、开局与胡牌时的一点小仪式感。</p></div><button class="toggle ${settings.sound?'on':''}" data-setting="sound" aria-label="牌桌音效" role="switch" aria-checked="${settings.sound}"></button></div><div class="setting-row"><div><h3>对局节奏</h3><p>调整电脑牌友的思考时间。</p></div><select class="select-control" id="speed" aria-label="对局节奏">${[['slow','慢慢来'],['normal','刚刚好'],['fast','快一点']].map(([v,t])=>`<option value="${v}" ${settings.speed===v?'selected':''}>${t}</option>`).join('')}</select></div><div class="setting-row"><div><h3>自动托管</h3><p>电脑代你打牌，可在牌桌上随时关闭。</p></div><button class="toggle ${settings.auto?'on':''}" data-setting="auto" aria-label="自动托管" role="switch" aria-checked="${settings.auto}"></button></div><div class="setting-row"><div><h3>安装到主屏幕</h3><p>像 App 一样打开。首次加载完成后可离线练习。</p></div><button class="secondary-button" data-action="install">安装指引 ↗</button></div></section><p class="about-note">雀友 v2.2 · 原创界面与牌面，参考休闲麻将游戏的交互习惯。<br>数据仅存储在当前浏览器，清除浏览器数据后将重置。${storageAvailable?'':'当前浏览器不支持持久保存，数据只在本次打开期间保留。'}</p>`;
 }
 function openModal(content){modalOpen=true;clearTimeout(botTimer);$('#modal-root').innerHTML=`<div class="modal-backdrop"><section class="modal" role="dialog" aria-modal="true" aria-label="雀友提示"><button class="close-modal" data-action="close-modal" aria-label="关闭">×</button>${content}</section></div>`;$('#modal-root button')?.focus();}
-function closeModal(){modalOpen=false;$('#modal-root').innerHTML='';deadline=Date.now()+25000;schedule();}
+function closeModal(){modalOpen=false;$('#modal-root').innerHTML='';if(!game?.online)deadline=Date.now()+25000;schedule();}
 function commitResult(){
   if(!game||records.some(r=>r.id===game.id))return;
   const me=game.players[0];
-  const row={id:game.id,at:game.endedAt||Date.now(),room:game.room,score:me.score,won:!!me.win,rank:me.win?.rank||0,turn:game.turn,duration:Math.max(1,Math.round(((game.endedAt||Date.now())-game.startedAt)/60000)),reason:game.reason};
+  const row={id:game.id,at:game.endedAt||Date.now(),room:game.room,score:me.score,won:!!me.win,rank:me.win?.rank||0,turn:game.turn,duration:Math.max(1,Math.round(((game.endedAt||Date.now())-game.startedAt)/60000)),reason:game.reason,online:!!game.online};
+  if(!game.online&&game.replay?.length&&game.phase==='finished'){
+    const list=read('replays',[]);
+    write('replays',[{id:game.id,frames:game.replay},...list.filter(item=>item.id!==game.id)].slice(0,8));
+  }
   records.unshift(row);records=records.slice(0,50);stats.games++;if(me.win)stats.wins++;stats.best=Math.max(stats.best,me.score);stats.points+=me.score;
   write('records',records);write('stats',stats);if(!game.online)write('game',null);renderNav();
 }
 function showResult(){
   if(!game||game.phase!=='finished'||view!=='game')return;
   const me=game.players[0];
-  openModal(`<div class="result-title"><div class="eyebrow">ANOTHER MOMENT WELL PLAYED</div><div class="result-emblem">${me.win?'胡':'雀'}</div><h2>${me.win?'好牌，好时光。':'下局，好牌在等你。'}</h2><p>${game.reason==='three'?'三家胡牌，本局血战结束。':'牌墙摸尽，歇一歇再来一局。'}</p><div class="result-total ${me.score<0?'negative':''}">${signed(me.score)}<small style="font-size:11px;margin-left:8px">分</small></div></div><div class="result-list">${[...game.players].sort((a,b)=>b.score-a.score).map((p,i)=>`<div class="result-player"><span>0${i+1}</span><span class="avatar ${p.id===0?'avatar-me':'avatar-'+p.id}">${p.id===0?'你':p.name.slice(0,1)}</span><div>${p.id===0?esc(game.online?p.name:settings.name):esc(p.name)}<small>${p.win?p.win.labels.join(' · ')+' · 第 '+p.win.rank+' 家胡牌':'未胡牌'}</small></div><b class="${p.score<0?'negative':''}">${signed(p.score)}</b></div>`).join('')}</div>${settlementHTML()}<div class="result-footer">虚拟积分已保存至本地战绩</div><div class="modal-actions"><button class="secondary-button" data-action="result-home">回大厅</button>${game.online?'<button class="secondary-button" data-online="leave">离开房间</button>':''}<button class="primary-button" data-action="again">再来一局 ${icon('arrow')}</button></div>`);
+  openModal(`<div class="result-title"><div class="eyebrow">ANOTHER MOMENT WELL PLAYED</div><div class="result-emblem">${me.win?'胡':'雀'}</div><h2>${me.win?'好牌，好时光。':'下局，好牌在等你。'}</h2><p>${game.reason==='three'?'三家胡牌，本局血战结束。':'牌墙摸尽，歇一歇再来一局。'}</p><div class="result-total ${me.score<0?'negative':''}">${signed(me.score)}<small style="font-size:11px;margin-left:8px">分</small></div></div><div class="result-list">${[...game.players].sort((a,b)=>b.score-a.score).map((p,i)=>`<div class="result-player"><span>0${i+1}</span><span class="avatar ${p.id===0?'avatar-me':'avatar-'+p.id}">${p.id===0?'你':esc(p.name.slice(0,1))}</span><div>${p.id===0?esc(game.online?p.name:settings.name):esc(p.name)}<small>${p.win?p.win.labels.join(' · ')+' · 第 '+p.win.rank+' 家胡牌':'未胡牌'}</small></div><b class="${p.score<0?'negative':''}">${signed(p.score)}</b></div>`).join('')}</div>${roundDetails(game,game.online&&online.room?.totals?online.room:null,esc,signed)}${settlementHTML()}<div class="result-footer">虚拟积分已保存至本地战绩</div><div class="modal-actions"><button class="secondary-button" data-action="result-home">回大厅</button>${game.online?'<button class="secondary-button" data-online="leave">离开房间</button>':''}<button class="secondary-button" data-replay-id="${game.id}" data-remote="${!!game.online}">查看牌谱</button>${!game.online||online.room?.owner===0&&!online.room.ranked?`<button class="primary-button" data-action="again">${game.online&&online.room.round<online.room.rounds?'返回候场续局':'再来一局'} ${icon('arrow')}</button>`:''}</div>`);
 }
 function settlementHTML(){
   if(!game?.drawSettled)return '';
-  return `<div class="settlement-details"><h3>流局检查与结算</h3><div>${game.readyStatus.map(p=>`${game.players[p.id].name}：${p.status}`).join(' · ')}</div>${game.settlements.length?game.settlements.map(s=>`<div class="settlement-line"><span>${s.type} · ${game.players[s.from].name} → ${game.players[s.to].name}${s.fan!==undefined?`<span class="score-label">（${s.fan} 番 · ${s.labels.join(' / ')}）</span>`:''}</span><b>${fmt(s.amount)} 分</b></div>`).join(''):'<div>本局无需查大叫、查花猪或退税赔付。</div>'}</div>`;
+  return `<div class="settlement-details"><h3>流局检查与结算</h3><div>${game.readyStatus.map(p=>`${esc(game.players[p.id].name)}：${p.status}`).join(' · ')}</div>${game.settlements.length?game.settlements.map(s=>`<div class="settlement-line"><span>${s.type} · ${esc(game.players[s.from].name)} → ${esc(game.players[s.to].name)}${s.fan!==undefined?`<span class="score-label">（${s.fan} 番 · ${s.labels.join(' / ')}）</span>`:''}</span><b>${fmt(s.amount)} 分</b></div>`).join(''):'<div>本局无需查大叫、查花猪或退税赔付。</div>'}</div>`;
 }
 function startRoom(id,force=false){
+  if(queued){toast('请先取消真人匹配');openOnline();return;}
   if(online.room){toast('请先完成好友房对局或退出房间，再开始单机练习');openOnline();return;}
   const room=rooms.find(r=>r.id===id)||rooms[1];
   if(game&&game.phase!=='finished'&&!force){
@@ -150,17 +154,20 @@ function schedule(){
   if(view!=='game'||!game||game.online||modalOpen||document.hidden||game.phase==='finished')return;
   const g=game,me=g.players[0];
   const speed={slow:1800,normal:950,fast:280}[settings.speed]||950;
-  if(g.phase==='discard'&&g.current!==0)botTimer=setTimeout(()=>{const before=g.winners.length;step(g);sound(g.winners.length>before?'win':'tile');render();},speed);
+  if(g.phase==='discard'&&g.current!==0)botTimer=setTimeout(()=>{const before=g.wins?.length??g.winners.length;step(g);sound((g.wins?.length??g.winners.length)>before?'win':'tile');render();},speed);
   else if(settings.auto&&g.phase==='exchange')botTimer=setTimeout(()=>{exchangeTiles(g,chooseExchangeIndices(me));render();},speed);
   else if(settings.auto&&g.phase==='que')botTimer=setTimeout(()=>{const c=[0,1,2].map(s=>me.hand.filter(t=>suitOf(t)===s).length);chooseQue(g,c.indexOf(Math.min(...c)));render();},speed);
   else if(settings.auto&&(g.phase==='claim'||g.current===0&&g.phase==='discard'))botTimer=setTimeout(autoAction,Math.max(600,speed));
 }
 function autoAction(){
   if(!game||game.online||view!=='game'||modalOpen)return;
-  const g=game,before=g.winners.length;
+  const g=game,before=g.wins?.length??g.winners.length;
   if(g.phase==='claim')respond(g,g.pending.options.includes('hu')?'hu':g.pending.options.includes('kong')?'kong':'pong');
-  else if(g.phase==='discard'&&g.current===0){if(!selfWin(g)){const ks=concealedKongs(g);if(ks.length)concealedKong(g,ks[0]);else discard(g,bestDiscard(g.players[0],g.difficulty));}}
-  sound(g.winners.length>before?'win':'tile');render();
+  else if(g.phase==='discard'&&g.current===0&&!selfWin(g)){
+    const ks=concealedKongs(g),additions=addedKongs(g);
+    if(ks.length)concealedKong(g,ks[0]);else if(additions.length)addedKong(g,additions[0]);else discard(g,bestDiscard(g.players[0],g.difficulty));
+  }
+  sound((g.wins?.length??g.winners.length)>before?'win':'tile');render();
 }
 function playTile(t,el){
   if(game?.phase==='exchange'){
@@ -175,11 +182,13 @@ function playTile(t,el){
   if(!game||game.phase!=='discard'||game.current!==0)return;
   if(!legalDiscards(game).includes(t)){toast(`请先打完定缺的${SUITS[game.players[0].que]}子`);return;}
   if(selected===t){if(game.online){onlineGame('discard',{tile:t});return;}discard(game,t);sound('tile');render();}
-  else{selected=t;$('.hand .selected')?.classList.remove('selected');el.classList.add('selected');$('#turn-status').textContent=`再点一次，打出${tileName(t)}`;}
+  else{selected=t;selectedIndex=Number(el.dataset.index);$('.hand .selected')?.classList.remove('selected');el.classList.add('selected');$('#turn-status').textContent=`再点一次，打出${tileName(t)}`;}
 }
 document.addEventListener('click',e=>{
   const el=e.target.closest('button,a');if(!el)return;
   if(el.dataset.online){onlineAction(el.dataset.online);return;}
+  if(el.dataset.replayId){openReplay(el.dataset.replayId,el.dataset.remote==='true');return;}
+  if(el.dataset.replayStep!==undefined){jumpReplay(Number(el.dataset.replayStep));return;}
   if(el.dataset.view==='online'){openOnline();return;}
   if(el.dataset.view){persistGame();closeModal();view=el.dataset.view;render();window.scrollTo(0,0);return;}
   if(el.dataset.room){startRoom(el.dataset.room);return;}
@@ -189,6 +198,7 @@ document.addEventListener('click',e=>{
   if(el.dataset.tile!==undefined){playTile(Number(el.dataset.tile),el);return;}
   if(el.dataset.claim){if(game.online){onlineGame('claim',{action:el.dataset.claim});return;}const before=game.winners.length;respond(game,el.dataset.claim);sound(game.winners.length>before?'win':'tile');render();return;}
   if(el.dataset.kong!==undefined){if(game.online){onlineGame('kong',{tile:Number(el.dataset.kong)});return;}concealedKong(game,Number(el.dataset.kong));sound('start');render();return;}
+  if(el.dataset.added!==undefined){const tile=Number(el.dataset.added);if(game.online)onlineGame('added',{tile});else{addedKong(game,tile);sound('start');render();}return;}
   if(el.dataset.setting){toggleSetting(el.dataset.setting);return;}
   const action=el.dataset.action;
   if(action==='sound'){toggleSetting('sound');if(settings.sound)sound();}
@@ -208,15 +218,20 @@ document.addEventListener('click',e=>{
     if(isWinning(game.players[0].hand,game.players[0].melds,game.players[0].que)){toast('这手牌可以胡啦！点击「胡」收下好牌。');return;}
     hinted=bestDiscard(game.players[0],'smart');document.querySelectorAll('.hand .tile').forEach(t=>t.classList.toggle('hinted',Number(t.dataset.tile)===hinted));toast(`建议打出${tileName(hinted)}，保留对子和相连的牌`);
   }
-  if(action==='sort'){if(game){game.players[0].hand.sort((a,b)=>a-b);if(game.phase==='exchange'){game.exchangeSelection=[];if(game.online)onlineChoice=[];}render();toast('已按万、筒、条整理手牌');}}
+  if(action==='sort'){if(game){game.players[0].hand.sort((a,b)=>a-b);selected=null;selectedIndex=null;if(game.phase==='exchange'){game.exchangeSelection=[];if(game.online)onlineChoice=[];}render();toast('已按万、筒、条整理手牌');}}
   if(action==='fullscreen'){if(!document.fullscreenElement)document.documentElement.requestFullscreen?.().catch(()=>toast('当前浏览器不支持全屏，可横屏体验'));else document.exitFullscreen?.();}
   if(action==='quick-rules')openModal('<div class="eyebrow">SICHUAN MAHJONG</div><h2>这一桌，怎么玩？</h2><div class="inline-rules">① 换三张：选三张同花色牌，同时交换后再定缺。缺门清空才能碰、杠、胡。<br>② 不吃牌，支持碰牌、直杠和暗杠。<br>③ 四组顺刻加一对将，或七对，即可胡牌。<br>④ 一家胡了继续打，三家胡牌或牌墙摸尽结束。<br>⑤ 点击选牌，再点一次打出，25 秒自动处理。</div><p>支持将对、带幺九、龙七对等牌型，以及流局查大叫、查花猪和退税。详细计分可在大厅「玩法指南」中查看。</p><div class="modal-actions"><button class="primary-button" data-action="close-modal">知道了，继续玩</button></div>');
   if(action==='result')showResult();
+  if(action==='waits'){
+    if(!game||game.online||game.phase!=='discard'||game.current!==0){toast('轮到你出牌时可查看听牌');return;}
+    openModal(waitsPanel(game,tile));
+  }
   if(action==='result-home'){closeModal();view='lobby';render();}
   if(action==='again'){if(game.online){closeModal();onlineAction('reset');return;}const room=rooms.find(r=>r.name===game.room)||rooms[1];startRoom(room.id);}
   if(action==='install')install();
 });
 document.addEventListener('change',e=>{
+  if(e.target.id==='replay-position')jumpReplay(Number(e.target.value));
   if(e.target.id==='speed'){settings.speed=e.target.value;write('settings',settings);toast('对局节奏已保存');}
   if(e.target.id==='nickname'){settings.name=e.target.value.trim().slice(0,10)||'悠闲牌友';write('settings',settings);renderNav();toast('新昵称已保存');}
 });
@@ -227,12 +242,12 @@ document.addEventListener('keydown',e=>{
 });
 setInterval(()=>{
   if(view!=='game'||!game||modalOpen||document.hidden)return;
-  if(game.phase==='claim'||game.phase==='discard'&&game.current===0){
+  if(game.online||game.phase==='claim'||game.phase==='discard'&&game.current===0){
     const left=Math.max(0,Math.ceil((deadline-Date.now())/1000));if($('#countdown'))$('#countdown').textContent=left;
     if(!left&&!game.online)autoAction();
   }
 },300);
-document.addEventListener('visibilitychange',()=>{if(document.hidden){clearTimeout(botTimer);persistGame();}else{deadline=Date.now()+25000;schedule();}});
+document.addEventListener('visibilitychange',()=>{if(document.hidden){clearTimeout(botTimer);persistGame();}else schedule();});
 window.addEventListener('pagehide',persistGame);
 window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();installPrompt=e;$('#install-button').hidden=false;});
 $('#install-button').addEventListener('click',install);
@@ -244,47 +259,143 @@ function connectionLabel(){return {idle:'未连接',connecting:'连接中，首�
 function openOnline(){
   closeModal();view='online';render();online.connect().catch(e=>{onlineError=e.message;render();});
 }
+
 function renderOnline(){
   const r=online.room;
   if(r?.game){game=r.game;game.exchangeSelection=onlineChoice;view='game';render();return;}
-  const header=`<div class="page-heading"><div><div class="eyebrow">GOOD FRIENDS, ONE TABLE</div><h1>人到齐，就开一桌。</h1><p>四位真人 · 换三张 · 四川血战 · 只玩虚拟积分</p></div><span class="connection-status" id="connection-status">${esc(connectionLabel())}</span></div>`;
+  const header=`<div class="page-heading"><div><h1>好友房</h1><p>邀请朋友打四川麻将</p></div><span class="connection-status" id="connection-status">${esc(connectionLabel())}</span></div>`;
   if(!r){
     const invited=new URLSearchParams(location.hash.slice(1)).get('room')||'';
-    $('#main').innerHTML=header+`<div class="online-entry"><section class="rules-card"><span class="eyebrow">HOST A TABLE</span><h2>创建好友房</h2><p>开一张牌桌，把六位房间码发给朋友。四人准备后，由房主开始。</p><label class="online-label">牌桌昵称<input id="online-name" class="settings-input" maxlength="10" value="${esc(settings.name)}"></label><label class="online-label">练习底分<select id="online-base" class="select-control"><option value="100">100 分 · 轻松一局</option><option value="200">200 分 · 自在切磋</option><option value="500">500 分 · 高手过招</option></select></label><button class="primary-button" data-online="create" ${onlineBusy?'disabled':''}>${onlineBusy?'请稍候…':'创建房间'} ${icon('arrow')}</button></section><section class="rules-card join-card"><span class="eyebrow">JOIN YOUR FRIENDS</span><h2>朋友在等你</h2><p>输入朋友分享的六位房间码，入座就能见面。</p><label class="online-label">房间码<input id="online-code" class="settings-input room-code-input" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" value="${esc(invited.replace(/\D/g,'').slice(0,6))}" placeholder="输入六位数字"></label><button class="secondary-button" data-online="join" ${onlineBusy?'disabled':''}>加入房间 ${icon('arrow')}</button></section></div><p class="about-note">${esc(onlineError||(!backendURL?'联机服务尚未部署，当前可继续使用单机练习。':'房间不需要注册。刷新页面或短暂断线后，会自动恢复当前座位；同一浏览器的多个页面共用一个座位。'))}</p>`;return;
+    const code=/^\d{6}$/.test(invited)?invited:'';
+    const name=`<label class="online-label">牌桌昵称<input id="online-name" class="settings-input" maxlength="10" value="${esc(settings.name)}"></label>`;
+    const join=`<section class="rules-card join-card">
+      <h2>${code?'加入好友的牌桌':'输入房间码'}</h2>${code?name:''}
+      <label class="online-label">房间码<input id="online-code" class="settings-input room-code-input" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" value="${code}" placeholder="六位数字"></label>
+      <button class="primary-button" data-online="join" ${onlineBusy?'disabled':''}>加入房间 ${icon('arrow')}</button>
+      ${code?'<button class="text-button" data-online="dismiss-invite">查看其他组局方式</button>':''}</section>`;
+    const create=`<section class="rules-card"><h2>创建好友房</h2>${name}
+      <label class="online-label">练习底分<select id="online-base" class="select-control"><option value="100">100 分</option><option value="200">200 分</option><option value="500">500 分</option></select></label>
+      ${roomOptions()}<button class="primary-button" data-online="create" ${onlineBusy?'disabled':''}>创建房间 ${icon('arrow')}</button></section>`;
+    const match=`<section class="rules-card match-entry"><h2>真人排位</h2>
+      <p>${queued?'正在等其他真人入座，满四人自动开局。':'真人四人血战，按一局总分结算段位积分。'}</p>
+      <button class="secondary-button" data-online="${queued?'unqueue':'queue'}">${queued?'取消匹配':'开始匹配'}</button>
+      <button class="secondary-button" data-online="profile">战绩与换设备</button></section>`;
+    $('#main').innerHTML=header+`<div class="online-entry ${code?'direct-invite':''}">${code?join:create+join}</div>${code?'':match}<p class="about-note" role="status">${esc(onlineError)}</p>`;
+    return;
   }
-  const ready=r.seats.filter(s=>s?.ready).length,me=r.seats[0],canStart=r.seats.every(s=>s?.ready&&s.connected);
-  $('#main').innerHTML=header+`<section class="waiting-room"><div class="waiting-heading"><div><span class="eyebrow">YOUR PRIVATE TABLE</span><h2>好友房 <span id="room-code">${r.code}</span></h2><p>${r.base} 底分 · 已准备 ${ready} / 4 人</p></div><button class="secondary-button" data-online="invite">复制邀请链接 ↗</button></div><div class="seat-grid">${r.seats.map((s,i)=>`<div class="waiting-seat ${s?'occupied':''}"><span class="avatar avatar-${i===0?'me':i}">${s?esc(s.name.slice(0,1)):'＋'}</span><h3>${s?esc(s.name)+(i===0?'（你）':''):'等一位牌友'}</h3><p>${s?(s.connected?s.ready?'已准备':'等待准备':'暂时离线'):'分享房间码，一起入座'}</p>${s&&r.owner===i?'<span class="host-tag">房主</span>':''}</div>`).join('')}</div><div class="waiting-actions"><button class="text-button" data-online="leave">离开房间</button><button class="secondary-button" data-online="ready" ${onlineBusy?'disabled':''}>${me?.ready?'取消准备':'我准备好了'}</button>${r.owner===0?`<button class="primary-button" data-online="start" ${!canStart||onlineBusy?'disabled':''}>开始对局 ${icon('arrow')}</button>`:''}</div><div class="rule-note">四位牌友全部在线并准备后，房主即可开局。对局中离线或操作超时会自动出牌，也可主动托管。服务重启会使当前房间失效。</div></section>`;
+  const ready=r.seats.filter(s=>s&&!s.bot&&s.ready&&s.connected).length;
+  const humans=r.seats.filter(s=>s&&!s.bot).length;
+  const me=r.seats[0],canStart=r.seats.every(s=>s?.ready&&s.connected);
+  const bots=r.seats.some(s=>s?.bot);
+  $('#main').innerHTML=header+`<section class="waiting-room">
+    <div class="waiting-heading"><div><h2>房间 <span id="room-code">${r.code}</span></h2>
+    <p>${r.base} 底分 · 已打 ${r.lineupChanged?0:r.round??0}/${r.rounds??4} 局 · 真人已准备 ${ready}/${humans}</p>
+    <p>${rulesLabel(r.rules)}</p></div><button class="secondary-button" data-online="invite">复制邀请链接</button></div>
+    <div class="seat-grid">${r.seats.map((s,i)=>`<div class="waiting-seat ${s?'occupied':''}">
+      <span class="avatar avatar-${i===0?'me':i}">${s?esc(s.name.slice(0,1)):'＋'}</span>
+      <h3>${s?esc(s.name)+(i===0?'（你）':''):'空座'}</h3>
+      <p>${s?(s.bot?'电脑 · 已准备':s.connected?s.ready?'已准备':'等待准备':'暂时离线'):'可邀请好友'}${s&&r.round>0&&!r.lineupChanged?' · '+signed(r.totals[i])+' 分':''}</p>
+      ${s&&r.owner===i?'<span class="host-tag">房主</span>':''}</div>`).join('')}</div>
+    <div class="waiting-actions"><button class="text-button" data-online="leave">离开房间</button>
+      <button class="secondary-button" data-online="ready" ${onlineBusy?'disabled':''}>${me?.ready?'取消准备':'我准备好了'}</button>
+      ${r.owner===0?`<button class="secondary-button" data-online="${bots?'unbots':'bots'}">${bots?'移除电脑':'电脑补位'}</button>
+        <button class="primary-button" data-online="start" ${!canStart||onlineBusy?'disabled':''}>开始对局 ${icon('arrow')}</button>`:''}</div>
+    ${r.lineupChanged?'<div class="rule-note">座位成员已变更，下次开局将重新累计总分。</div>':''}
+    ${!canStart?'<div class="rule-note">座位齐全且真人全部在线并准备后，房主可以开局。候场时，加入的朋友可替换电脑座位。</div>':''}</section>`;
 }
+async function openReplay(id,remote){
+  try{
+    replay=remote?await online.request('replay.get',{id}):read('replays',[]).find(item=>item.id===id);
+    if(!replay){toast('这局没有保存牌谱');return;}
+    jumpReplay(0);
+  }catch(error){toast(error.message);}
+}
+function jumpReplay(index){
+  if(!replay||index<0||index>=replay.frames.length)return;
+  openModal(replayPanel(replay,index,esc,tile));
+  $('.modal')?.classList.add('replay-modal');
+}
+async function showProfile(){
+  profile=await online.request('profile.get');
+  openModal(`<h2>联机战绩</h2><p>${rankName(profile.rating)} · ${profile.rating} 段位分 · 对局 ${profile.games} · 胡牌 ${profile.wins}</p>
+    <div class="profile-results">${profile.records.map(r=>`<div class="settlement-line"><span>${esc(r.name)} · ${signed(r.score)} 分</span><button class="text-button" data-replay-id="${r.id}" data-remote="true">牌谱</button></div>`).join('')}</div>
+    <p>转移码 5 分钟内有效。在新设备输入后，原设备的联机身份会退出。</p>
+    <button class="secondary-button" data-online="transfer-code">生成转移码</button>
+    <label class="online-label">转移码<input id="transfer-code" class="settings-input" maxlength="12" autocomplete="off"></label>
+    <button class="primary-button" data-online="redeem">恢复联机战绩</button>`);
+}
+
 async function onlineAction(action){
   if(action==='room'){openOnline();return;}
+  if(action==='dismiss-invite'){history.replaceState(null,'',location.pathname+location.search);render();return;}
+  if(['profile','transfer-code','redeem'].includes(action)){
+    try{
+      if(action==='profile')await showProfile();
+      if(action==='transfer-code'){
+        const {code}=await online.request('profile.code');
+        openModal(`<h2>一次性转移码</h2><p>只在自己的新设备输入，5 分钟内有效。</p><input class="settings-input" readonly value="${esc(code)}" aria-label="一次性转移码"><div class="modal-actions"><button class="secondary-button" data-online="profile">返回战绩</button></div>`);
+      }
+      if(action==='redeem'){
+        await online.request('profile.redeem',{code:$('#transfer-code')?.value});
+        closeModal();toast('联机战绩已恢复');
+        if(online.room)openOnline();else await showProfile();
+      }
+    }catch(error){toast(error.message);}
+    return;
+  }
   if(action==='invite'){
     const url=new URL(location.href);url.hash='room='+online.room.code;
     try{await navigator.clipboard.writeText(url.href);toast('邀请链接已复制，发给朋友即可加入');}catch{openModal(`<h2>邀请朋友入座</h2><p>房间码：${online.room.code}</p><input class="settings-input" style="width:100%" readonly value="${esc(url.href)}" aria-label="邀请链接">`);}return;
   }
   if(onlineBusy)return;onlineBusy=true;onlineError='';
   const payload={name:$('#online-name')?.value||settings.name};
-  if(action==='create')payload.base=Number($('#online-base')?.value)||100;
+  if(action==='create')Object.assign(payload,{base:Number($('#online-base')?.value)||100},getRoomOptions());
   if(action==='join')payload.code=$('#online-code')?.value.trim();
+  if(action==='bots'||action==='unbots')payload.enabled=action==='bots';
   if(action==='ready')payload.ready=!online.room.seats[0].ready;
-  try{await online.request('room.'+action,payload);if(action==='leave'){closeModal();game=practiceGame||read('game',null);practiceGame=null;view='online';}if(action==='reset')view='online';}
-  catch(e){onlineError=e.message;toast(e.message);}finally{onlineBusy=false;render();}
+  try{
+    if(action==='queue'||action==='unqueue'){
+      queued=action==='queue';
+      await online.request(queued?'queue.join':'queue.leave',payload);
+    }else{
+      await online.request('room.'+(action==='unbots'?'bots':action),payload);
+      if(action==='join'&&new URLSearchParams(location.hash.slice(1)).has('room'))history.replaceState(null,'',location.pathname+location.search);
+      if(action==='leave'){closeModal();game=practiceGame||read('game',null);practiceGame=null;view='online';}
+      if(action==='reset')view='online';
+    }
+  }
+  catch(e){if(action==='queue')queued=false;onlineError=e.message;toast(e.message);}finally{onlineBusy=false;render();}
 }
 async function onlineGame(action,payload={}){
   if(onlineBusy)return;onlineBusy=true;
-  try{await online.request('game.'+action,payload);sound(action==='hu'?'win':'tile');}
+  try{
+    if(online.status!=='connected')throw new Error('正在重连，恢复后请重新操作');
+    await online.request('game.'+action,payload);sound(action==='hu'?'win':'tile');
+  }
   catch(e){toast(e.message);}finally{onlineBusy=false;}
 }
 online.addEventListener('state',e=>{
   const r=e.detail,wasOnline=!!game?.online;
   if(r?.game){
+    const previous=wasOnline&&game.id===r.game.id?game.sequence:0;
     if(!wasOnline){persistGame();practiceGame=game;}
     if(game?.id!==r.game.id||r.game.phase!=='exchange')onlineChoice=[];
     game=r.game;game.exchangeSelection=onlineChoice;
-    if(view==='online'||view==='game'&&wasOnline)view='game';
+    const matched=queued&&r.ranked;
+    queued=false;
+    if(view==='online'||view==='game'&&wasOnline||matched)view='game';
+    if(game.phase==='finished')commitResult();
+    else if(previous&&view==='game'){
+      const update=game.events.find(e=>e.seq>previous&&['win','discard','draw','kong','added','pong'].includes(e.type));
+      if(update&&update.player!==0)sound(update.type==='win'?'win':'tile');
+    }
   }else if(wasOnline){game=practiceGame||read('game',null);practiceGame=null;if(view==='game')view='online';}
   if(['online','game','lobby'].includes(view))render();
 });
-online.addEventListener('status',()=>{if($('#connection-status'))$('#connection-status').textContent=connectionLabel();});
+online.addEventListener('status',()=>{
+  if($('#connection-status'))$('#connection-status').textContent=connectionLabel();
+  if(queued&&online.status==='reconnecting'){queued=false;onlineError='连接中断，恢复后可重新加入匹配';if(view==='online')render();}
+});
 online.addEventListener('notice',e=>toast(e.detail));
 if('serviceWorker'in navigator)navigator.serviceWorker.register('./sw.js').catch(()=>{/* File previews may not support service workers. */});
 render();

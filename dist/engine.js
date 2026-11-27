@@ -23,7 +23,7 @@ export function isWinning(hand, melds=[], que=-1) {
   for(let i=0;i<27;i++)if(c[i]>=2){c[i]-=2;const ok=meldable(c);c[i]+=2;if(ok)return true;}
   return false;
 }
-export function winValue(hand,melds=[],selfDraw=false,base=100) {
+export function winValue(hand,melds=[],selfDraw=false,base=100,rules={},extras=[]) {
   const c=counts(hand), labels=[],all=[...hand,...melds.flatMap(m=>m.tiles)];let fan=0;
   const pairs=!melds.length&&c.every(n=>n%2===0);
   const jiang=all.every(t=>[1,4,7].includes(t%9)),roots=counts(all).filter(n=>n===4).length;
@@ -47,8 +47,10 @@ export function winValue(hand,melds=[],selfDraw=false,base=100) {
   }
   if(new Set(all.map(suitOf)).size===1){fan+=2;if(labels[0]==='平胡')labels.shift();labels.push('清一色');}
   if(!labels.length)labels.push('平胡');
-  if(selfDraw){fan++;labels.push('自摸');}
-  return {fan:Math.min(fan,5),rawFan:fan,labels,value:base*2**Math.min(fan,5)};
+  if(selfDraw){if(rules.selfDraw!=='base')fan++;labels.push(rules.selfDraw==='base'?'自摸加底':'自摸');}
+  fan+=extras.length;labels.push(...extras);
+  const capped=Math.min(fan,rules.cap??5);
+  return {fan:capped,rawFan:fan,labels,value:base*2**capped+(selfDraw&&rules.selfDraw==='base'?base:0)};
 }
 export function bestDiscard(player,difficulty='normal') {
   const hand=player.hand, c=counts(hand);
@@ -80,15 +82,34 @@ export function bestDiscard(player,difficulty='normal') {
   }
   return best;
 }
-function log(g,text,type='turn',player=null,tile=null){g.events.unshift({seq:++g.sequence,text,type,player,tile});g.events=g.events.slice(0,60);}
-export function createGame({rng=Math.random,difficulty='normal',base=100,room='休闲练习场',humanSeats=[0]}={}) {
+function log(g,text,type='turn',player=null,tile=null){
+  const event={seq:++g.sequence,text,type,player,tile};
+  g.events.unshift(event);g.events=g.events.slice(0,60);
+  g.replay??=[];
+  g.replay.push({event,wall:g.wall.length,current:g.current,
+    players:g.players.map(p=>({name:p.name,hand:[...p.hand],melds:p.melds.map(m=>[...m.tiles]),river:[...p.discards],score:p.score,que:p.que}))});
+}
+export function tableRules(input={}){
+  return {mode:input?.mode==='flow'?'flow':'battle',cap:[3,4,5].includes(input?.cap)?input.cap:5,
+    selfDraw:input?.selfDraw==='base'?'base':'fan',exchange:input?.exchange!==false,
+    kong:input?.kong==='light'?'light':'classic'};
+}
+export function createGame({rng=Math.random,difficulty='normal',base=100,room='休闲练习场',humanSeats=[0],dealer=0,rules:options,now=Date.now(),names}={}) {
   const wall=Array.from({length:108},(_,i)=>Math.floor(i/4));
   for(let i=107;i>0;i--){const j=Math.floor(rng()*(i+1));[wall[i],wall[j]]=[wall[j],wall[i]];}
-  const players=['你','小满','阿川','米粒'].map((name,i)=>({id:i,name,hand:[],melds:[],discards:[],que:-1,score:0,win:null}));
+  const players=(names||['你','小满','阿川','米粒']).map((name,i)=>({id:i,name,hand:[],melds:[],discards:[],que:-1,score:0,win:null}));
   for(let round=0;round<13;round++)for(const p of players)p.hand.push(wall.pop());
-  players[0].hand.push(wall.pop());players.forEach(p=>sorted(p.hand));
-  const g={version:2,id:globalThis.crypto?.randomUUID?.()||String(Date.now())+rng(),humanSeats:[...humanSeats],players,wall,current:0,phase:'exchange',exchangeDirection:1+Math.floor(rng()*3),exchangeSelection:[],exchangeChoices:{},pending:null,lastDiscard:null,lastDraw:null,turn:1,sequence:0,events:[],ledger:[],settlements:[],winners:[],difficulty,base,room,startedAt:Date.now(),endedAt:null,reason:null};
-  log(g,'牌已发好，请选三张同花色的牌交换','system');return g;
+  const openingTile=wall.pop();
+  players[dealer].hand.push(openingTile);players.forEach(p=>sorted(p.hand));
+  const rules=tableRules(options);
+  const g={version:2,id:globalThis.crypto?.randomUUID?.()||String(Date.now())+rng(),humanSeats:[...humanSeats],players,wall,dealer,current:dealer,phase:rules.exchange?'exchange':'que',rules,exchangeDirection:1+Math.floor(rng()*3),exchangeSelection:[],exchangeChoices:{},pending:null,lastDiscard:null,lastDraw:null,turn:1,sequence:0,events:[],ledger:[],settlements:[],wins:[],winners:[],difficulty,base,room,startedAt:now,endedAt:null,reason:null};
+  if(!rules.exchange)setBotQue(g);
+  if(rules.mode==='flow')g.lastDraw=openingTile;
+  log(g,rules.exchange?'牌已发好，请选三张同花色的牌交换':'牌已发好，请选择定缺','system');return g;
+}
+function setBotQue(g){
+  for(const p of g.players.filter(p=>!(g.humanSeats||[0]).includes(p.id)))
+    p.que=[0,1,2].sort((a,b)=>p.hand.filter(t=>suitOf(t)===a).length-p.hand.filter(t=>suitOf(t)===b).length)[0];
 }
 export function chooseExchangeIndices(p){
   const suits=[0,1,2].map(s=>({s,tiles:p.hand.map((t,i)=>({t,i})).filter(x=>suitOf(x.t)===s)})).filter(x=>x.tiles.length>=3).sort((a,b)=>a.tiles.length-b.tiles.length);
@@ -107,7 +128,8 @@ export function exchangeTiles(g,indices,id=0){
   for(const p of g.players){p.hand.push(...outgoing[(p.id-g.exchangeDirection+4)%4]);sorted(p.hand);}
   g.exchangeReceivedBySeat=g.players.map(p=>outgoing[(p.id-g.exchangeDirection+4)%4]);
   g.exchangeReceived=g.exchangeReceivedBySeat[0];g.exchangeSelection=[];
-  for(const p of g.players.filter(p=>!humans.includes(p.id)))p.que=[0,1,2].sort((a,b)=>p.hand.filter(t=>suitOf(t)===a).length-p.hand.filter(t=>suitOf(t)===b).length)[0];
+  if(flow(g))g.lastDraw=g.players[g.dealer??0].hand.at(-1);
+  setBotQue(g);
   g.phase='que';log(g,`换三张完成 · ${['','换给下家','对家互换','换给上家'][g.exchangeDirection]}`,'system');return true;
 }
 export function chooseQue(g,suit,id=0) {
@@ -120,17 +142,20 @@ export function chooseQue(g,suit,id=0) {
 }
 export function legalDiscards(g,id=g.current) {
   const p=g.players[id],q=p.hand.filter(t=>suitOf(t)===p.que);
+  if(g.rules?.mode==='flow'&&p.win&&g.lastDraw!=null)return [g.lastDraw];
   return [...new Set(q.length?q:p.hand)];
 }
 function remove(p,t,n=1){for(let i=0;i<n;i++){const at=p.hand.indexOf(t);if(at<0)throw Error('Tile missing');p.hand.splice(at,1);}}
 function finish(g,reason){if(reason==='wall')settleDraw(g);g.phase='finished';g.pending=null;g.reason=reason;g.endedAt=Date.now();log(g,reason==='three'?'三家胡牌，本局结束':'牌墙摸尽，已完成查大叫结算','system');}
-function nextActive(g,from){for(let n=1;n<=4;n++){const i=(from+n)%4;if(!g.players[i].win)return i;}return -1;}
-function draw(g,id) {
-  if(g.winners.length>=3){finish(g,'three');return;}
+const flow=g=>g.rules?.mode==='flow';
+const active=(g,p)=>flow(g)||!p.win;
+function nextActive(g,from){for(let n=1;n<=4;n++){const i=(from+n)%4;if(active(g,g.players[i]))return i;}return -1;}
+function draw(g,id,replacement=false) {
+  if(!flow(g)&&g.winners.length>=3){finish(g,'three');return;}
   if(!g.wall.length){finish(g,'wall');return;}
-  g.current=id;g.pending=null;g.phase='discard';g.turn++;
+  g.current=id;g.pending=null;g.phase='discard';g.turn++;g.replacement=replacement;g.justClaimed=false;
   const t=g.wall.pop();g.players[id].hand.push(t);sorted(g.players[id].hand);g.lastDraw=t;
-  log(g,`${g.players[id].name}摸牌`,'draw',id);
+  log(g,`${g.players[id].name}${replacement?'补牌':'摸牌'}`,'draw',id,t);
 }
 function pay(g,from,to,amount,kind='win'){g.players[from].score-=amount;g.players[to].score+=amount;g.ledger.push({from,to,amount,kind});}
 export function settleDraw(g){
@@ -148,48 +173,81 @@ export function settleDraw(g){
     const amount=g.base*16;pay(g,p.id,q.id,amount,'pig');g.settlements.push({type:'查花猪',from:p.id,to:q.id,amount});
   }
   for(const {p,waits} of ready){
-    const best=waits.map(t=>winValue([...p.hand,t],p.melds,false,g.base)).sort((a,b)=>b.value-a.value)[0];
+    const best=waits.map(t=>winValue([...p.hand,t],p.melds,false,g.base,g.rules)).sort((a,b)=>b.value-a.value)[0];
     for(const q of unready){pay(g,q.id,p.id,best.value,'ready');g.settlements.push({type:'查大叫',from:q.id,to:p.id,amount:best.value,fan:best.fan,labels:best.labels});}
   }
   for(const s of g.settlements)log(g,`${s.type} · ${g.players[s.from].name} → ${g.players[s.to].name} ${s.amount} 分`,'settlement');
   g.readyStatus=active.map(p=>({id:p.id,status:pigs.includes(p)?'花猪':ready.some(r=>r.p===p)?'已听牌':'未听牌'}));
 }
-function recordWin(g,id,from,tile,selfDraw) {
+function recordWin(g,id,from,tile,selfDraw,context={}) {
   const p=g.players[id],hand=selfDraw?p.hand:[...p.hand,tile];
-  const val=winValue(hand,p.melds,selfDraw,g.base);let amount=0;
-  if(selfDraw){for(const other of g.players)if(other.id!==id&&!other.win){pay(g,other.id,id,val.value);amount+=val.value;}}
+  const extras=[];
+  if(selfDraw&&g.replacement)extras.push('杠上花');
+  if(context.rob)extras.push('抢杠胡');
+  if(context.afterKong)extras.push('杠上炮');
+  if(!g.wall.length)extras.push(selfDraw?'海底自摸':'海底炮');
+  const val=winValue(hand,p.melds,selfDraw,g.base,g.rules,extras);let amount=0;
+  if(selfDraw){for(const other of g.players)if(other.id!==id&&active(g,other)){pay(g,other.id,id,val.value);amount+=val.value;}}
   else {pay(g,from,id,val.value);amount=val.value;}
-  p.win={...val,selfDraw,from,tile,amount,rank:g.winners.length+1};g.winners.push(id);
+  const rank=p.win?.rank??g.winners.length+1;
+  p.win={...val,selfDraw,from,tile,amount,rank,count:(p.win?.count||0)+1};
+  if(!g.winners.includes(id))g.winners.push(id);
+  (g.wins??=[]).push({id,...p.win,count:1});
   log(g,`${p.name}${selfDraw?'自摸':'胡牌'} · ${val.labels.join(' / ')} +${amount}`,'win',id,tile);
 }
-function resolveWins(g,ids,from,tile) {
-  for(const id of ids)recordWin(g,id,from,tile,false);
+function resolveWins(g,ids,from,tile,context={}) {
+  if(context.rob){
+    remove(g.players[from],tile);
+    g.players[from].discards.push(tile);
+    g.lastDiscard={from,tile,turn:g.turn};
+  }
+  for(const id of ids)recordWin(g,id,from,tile,false,context);
   g.pending=null;
-  if(g.winners.length>=3)finish(g,'three');else draw(g,nextActive(g,from));
+  draw(g,nextActive(g,from));
 }
 export function selfWin(g) {
   const p=g.players[g.current];
-  if(g.phase!=='discard'||!isWinning(p.hand,p.melds,p.que))return false;
+  if(g.phase!=='discard'||g.justClaimed||!active(g,p)||!isWinning(p.hand,p.melds,p.que))return false;
   recordWin(g,g.current,g.current,g.lastDraw,true);
-  if(g.winners.length>=3)finish(g,'three');else draw(g,nextActive(g,g.current));return true;
+  if(flow(g)&&g.lastDraw!=null){remove(p,g.lastDraw);p.discards.push(g.lastDraw);}
+  draw(g,nextActive(g,g.current));return true;
 }
 export function concealedKongs(g,id=g.current) {
-  const p=g.players[id];if(g.phase!=='discard'||g.current!==id||!g.wall.length||p.hand.some(t=>suitOf(t)===p.que))return [];
+  const p=g.players[id];if(g.phase!=='discard'||g.current!==id||g.justClaimed||p.win||!g.wall.length||p.hand.some(t=>suitOf(t)===p.que))return [];
   return counts(p.hand).flatMap((n,t)=>n===4?[t]:[]);
 }
 export function concealedKong(g,tile) {
   if(!concealedKongs(g).includes(tile))return false;
   const p=g.players[g.current];remove(p,tile,4);p.melds.push({kind:'concealed',tiles:Array(4).fill(tile),from:p.id});
-  for(const other of g.players)if(other.id!==p.id&&!other.win)pay(g,other.id,p.id,g.base*2,'kong');
-  log(g,`${p.name}暗杠${tileName(tile)}`,'kong',p.id,tile);draw(g,p.id);return true;
+  for(const other of g.players)if(other.id!==p.id&&active(g,other))pay(g,other.id,p.id,g.base*(g.rules?.kong==='light'?1:2),'kong');
+  log(g,`${p.name}暗杠${tileName(tile)}`,'kong',p.id,tile);draw(g,p.id,true);return true;
+}
+export function addedKongs(g,id=g.current){
+  const p=g.players[id];
+  if(g.phase!=='discard'||g.current!==id||g.justClaimed||p.win||!g.wall.length||p.hand.some(t=>suitOf(t)===p.que))return [];
+  return p.melds.filter(m=>m.kind==='pong'&&p.hand.includes(m.tiles[0])).map(m=>m.tiles[0]);
+}
+function completeAddedKong(g,from,tile){
+  const p=g.players[from],meld=p.melds.find(m=>m.kind==='pong'&&m.tiles[0]===tile);
+  remove(p,tile);meld.tiles.push(tile);meld.kind='added';
+  for(const other of g.players)if(other.id!==from&&active(g,other))pay(g,other.id,from,g.base,'kong');
+  log(g,`${p.name}补杠${tileName(tile)}`,'added',from,tile);
+  draw(g,from,true);
+}
+export function addedKong(g,tile){
+  if(!addedKongs(g).includes(tile))return false;
+  const from=g.current;
+  log(g,`${g.players[from].name}申请补杠${tileName(tile)}`,'action',from,tile);
+  if(!offerWin(g,from,tile,{rob:true}))completeAddedKong(g,from,tile);
+  return true;
 }
 function claimMeld(g,id,kind) {
   const {from,tile}=g.pending,p=g.players[id];
   g.players[from].discards.pop();remove(p,tile,kind==='kong'?3:2);
   p.melds.push({kind,tiles:Array(kind==='kong'?4:3).fill(tile),from});
-  g.current=id;g.pending=null;g.lastDraw=null;
+  g.current=id;g.pending=null;g.lastDraw=null;g.replacement=false;g.justClaimed=kind==='pong';
   log(g,`${p.name}${kind==='kong'?'杠':'碰'}${tileName(tile)}`,kind,id,tile);
-  if(kind==='kong'){pay(g,from,id,g.base*2,'kong');draw(g,id);}else g.phase='discard';
+  if(kind==='kong'){pay(g,from,id,g.base*(g.rules?.kong==='light'?1:2),'kong');draw(g,id,true);}else g.phase='discard';
 }
 function processMelds(g,from,tile,skipped=[]) {
   for(let offset=1;offset<=3;offset++){
@@ -209,13 +267,17 @@ export function discard(g,tile,actor=g.current) {
   const from=g.current,p=g.players[from];remove(p,tile);p.discards.push(tile);
   g.lastDiscard={from,tile,turn:g.turn};g.lastDraw=null;
   log(g,`${p.name}打出${tileName(tile)}`,'discard',from,tile);
-  const wins=[];
-  for(let offset=1;offset<=3;offset++){const id=(from+offset)%4,q=g.players[id];if(!q.win&&isWinning([...q.hand,tile],q.melds,q.que))wins.push(id);}
-  const humans=wins.filter(i=>(g.humanSeats||[0]).includes(i));
-  if(humans.length){g.phase='claim';g.pending={kind:'win',from,tile,options:['hu'],wins,answers:{},actor:humans[0]};}
-  else if(wins.length)resolveWins(g,wins,from,tile);
-  else processMelds(g,from,tile);
+  const afterKong=!!g.replacement;g.replacement=false;
+  if(!offerWin(g,from,tile,{afterKong}))processMelds(g,from,tile);
   return true;
+}
+function offerWin(g,from,tile,context){
+  const wins=[];
+  for(let offset=1;offset<=3;offset++){const id=(from+offset)%4,q=g.players[id];if(active(g,q)&&isWinning([...q.hand,tile],q.melds,q.que))wins.push(id);}
+  const humans=wins.filter(i=>(g.humanSeats||[0]).includes(i));
+  if(humans.length){g.phase='claim';g.pending={kind:'win',from,tile,options:['hu'],wins,answers:{},actor:humans[0],context};}
+  else if(wins.length)resolveWins(g,wins,from,tile,context);
+  return wins.length>0;
 }
 export function respond(g,action,id=g.pending?.actor??0) {
   if(g.phase!=='claim'||(action!=='pass'&&!g.pending.options.includes(action)))return false;
@@ -227,7 +289,8 @@ export function respond(g,action,id=g.pending?.actor??0) {
     const waiting=humans.filter(i=>p.answers[i]===undefined);
     if(waiting.length){p.actor=waiting[0];return true;}
     const wins=p.wins.filter(i=>!humans.includes(i)||p.answers[i]);
-    if(wins.length)resolveWins(g,wins,p.from,p.tile);
+    if(wins.length)resolveWins(g,wins,p.from,p.tile,p.context);
+    else if(p.context?.rob)completeAddedKong(g,p.from,p.tile);
     else processMelds(g,p.from,p.tile,humans);
   }else{
     if(id!==(p.actor??0))return false;
@@ -240,9 +303,21 @@ export function step(g) {
   if(g.phase!=='discard'||(g.humanSeats||[0]).includes(g.current))return false;
   if(selfWin(g))return true;
   const kongs=concealedKongs(g);if(kongs.length)return concealedKong(g,kongs[0]);
-  return discard(g,bestDiscard(g.players[g.current],g.difficulty));
+  const additions=addedKongs(g);if(additions.length)return addedKong(g,additions[0]);
+  return discard(g,g.players[g.current].win?g.lastDraw:bestDiscard(g.players[g.current],g.difficulty));
 }
 export function waitingTiles(player) {
   if(player.hand.length!==13-player.melds.length*3)return [];
   return Array.from({length:27},(_,i)=>i).filter(t=>isWinning([...player.hand,t],player.melds,player.que));
+}
+export function discardWaits(g,id=0){
+  const player=g.players[id];
+  const visible=[...player.hand,...g.players.flatMap(p=>[
+    ...p.discards,...p.melds.flatMap(m=>m.tiles)
+  ])].filter(t=>t>=0);
+  return legalDiscards(g,id).flatMap(tile=>{
+    const at=player.hand.indexOf(tile),hand=player.hand.filter((_,i)=>i!==at);
+    const waits=waitingTiles({...player,hand}).map(t=>({tile:t,left:Math.max(0,4-visible.filter(x=>x===t).length)}));
+    return waits.length?[{tile,waits}]:[];
+  });
 }
