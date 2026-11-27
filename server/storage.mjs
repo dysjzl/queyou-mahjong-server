@@ -5,6 +5,7 @@ export async function openStorage({databaseURL,file}){
   if(databaseURL){
     const {Pool}=await import('pg');
     const pool=new Pool({connectionString:databaseURL,max:3,connectionTimeoutMillis:8000});
+    pool.on('error',error=>console.error('Database connection interrupted:',error.code||error.name));
     await pool.query('CREATE TABLE IF NOT EXISTS queyou_state (key TEXT PRIMARY KEY, body JSONB NOT NULL)');
     const {rows}=await pool.query('SELECT key, body FROM queyou_state');
     return {entries:rows.map(r=>[r.key,r.body]),async save(changes){

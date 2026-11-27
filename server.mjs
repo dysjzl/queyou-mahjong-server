@@ -10,7 +10,7 @@ const types={'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8'
 export function createAppServer({rooms=new RoomService(),allowedOrigins=[]}={}){
   const extra=new Set([...allowedOrigins,...(process.env.ALLOWED_ORIGINS||'https://dysjzl.github.io').split(',').map(s=>s.trim())]);
   const server=http.createServer(async(req,res)=>{
-    if(req.url==='/healthz'){res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'}).end(JSON.stringify({ok:true,version:'2.2.0',durable:!!process.env.DATABASE_URL}));return;}
+    if(req.url==='/healthz'){res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'}).end(JSON.stringify({ok:true,version:'2.2.1',durable:!!process.env.DATABASE_URL}));return;}
     if(req.method!=='GET'&&req.method!=='HEAD'){res.writeHead(405).end();return;}
     try{const name=decodeURIComponent(new URL(req.url,'http://localhost').pathname),target=path.resolve(root,'.'+(name==='/'?'/index.html':name));if(!target.startsWith(root+path.sep)){res.writeHead(403).end();return;}
       const data=await readFile(target);res.writeHead(200,{'Content-Type':types[path.extname(target)]||'application/octet-stream','Cache-Control':'no-cache','X-Content-Type-Options':'nosniff'}).end(req.method==='HEAD'?undefined:data);

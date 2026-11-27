@@ -22,6 +22,18 @@ export function getRoomOptions(){
   return {rounds:Number(value('room-rounds'))||4,rules:{mode:value('room-mode'),cap:Number(value('room-cap')),
     exchange:value('room-exchange')!=='no',selfDraw:value('room-self-draw'),kong:value('room-kong')}};
 }
+export function tableGuide(rules){
+  const opening=rules?.exchange===false?'开局直接定缺。':'选三张同花色的牌换出去，再选择定缺。';
+  const finish=rules?.mode==='flow'
+    ?'首次胡牌后手牌锁定，只能打出新摸的牌。可以多次胡牌，直到牌墙摸尽。'
+    :'胡牌后观战。三家胡牌或牌墙摸尽时结算。';
+  return `<h2>本桌规则</h2><p>${rulesLabel(rules)}</p><ul class="inline-rules">
+    <li>${opening}缺门牌打完后才能碰、杠、胡。</li>
+    <li>可碰、直杠、暗杠和补杠。补杠时其他玩家可以抢杠胡。</li>
+    <li>${finish}流局查大叫、查花猪和退还符合条件的杠分。</li>
+    <li>同一张牌点两次可打出，出牌限 25 秒。</li></ul>
+    <div class="modal-actions"><button class="primary-button" data-action="close-modal">返回牌桌</button></div>`;
+}
 export function waitsPanel(game,tile){
   const waits=discardWaits(game);
   if(!waits.length)return '<h2>听牌提示</h2><p>当前没有打出一张就能听牌的选择。</p>';
@@ -51,7 +63,7 @@ export function roundDetails(game,room,esc,signed){
   const wins=game.wins||[];
   const heading=room?`<p class="round-total">第 ${room.round} / ${room.rounds} 局 · 累计 ${signed(room.totals[0])} 分</p>`:'';
   const totals=room?`<div class="score-lines">${room.seats.map((p,i)=>p?`<span>${esc(p.name)} <b>${signed(room.totals[i])}</b></span>`:'').join('')}</div>`:'';
-  const winList=wins.map(w=>`<div class="settlement-line"><span>${esc(game.players[w.id].name)} · ${w.selfDraw?'自摸':esc(game.players[w.from].name)+'点炮'} ${w.tile==null?'':tileName(w.tile)} · ${w.fan} 番 · ${esc(w.labels.join('、'))}</span><b>+${w.amount}</b></div>`).join('');
+  const winList=wins.map(w=>`<div class="settlement-line"><span>${esc(game.players[w.id].name)} · ${w.selfDraw?'自摸':esc(game.players[w.from].name)+(w.labels.includes('抢杠胡')?'被抢杠':'点炮')} ${w.tile==null?'':tileName(w.tile)} · ${w.fan} 番 · ${esc(w.labels.join('、'))}</span><b>+${w.amount}</b></div>`).join('');
   const ledger=(game.ledger||[]).filter(e=>['win','kong'].includes(e.kind)).map(e=>`<div class="settlement-line"><span>${esc(game.players[e.from].name)} → ${esc(game.players[e.to].name)} · ${e.kind==='kong'?'杠分':'胡牌'}</span><b>${e.amount}</b></div>`).join('');
   return heading+totals+(winList||ledger?`<details class="settlement-details"><summary>胡牌与付分明细</summary>${winList}${ledger}</details>`:'');
 }

@@ -1,7 +1,7 @@
 import {SUITS,tileName,suitOf,createGame,chooseQue,chooseExchangeIndices,exchangeTiles,legalDiscards,bestDiscard,discard,respond,step,selfWin,concealedKongs,concealedKong,addedKongs,addedKong,isWinning} from './engine.js';
 import {RoomConnection,backendURL} from './network.js';
 import {renderTileFace} from './tile-art.js';
-import {modeName,rulesLabel,roomOptions,getRoomOptions,waitsPanel,replayPanel,roundDetails,rankName} from './upgrades.js';
+import {modeName,rulesLabel,roomOptions,getRoomOptions,tableGuide,waitsPanel,replayPanel,roundDetails,rankName} from './upgrades.js';
 
 const $=s=>document.querySelector(s);
 const icons={
@@ -220,7 +220,7 @@ document.addEventListener('click',e=>{
   }
   if(action==='sort'){if(game){game.players[0].hand.sort((a,b)=>a-b);selected=null;selectedIndex=null;if(game.phase==='exchange'){game.exchangeSelection=[];if(game.online)onlineChoice=[];}render();toast('已按万、筒、条整理手牌');}}
   if(action==='fullscreen'){if(!document.fullscreenElement)document.documentElement.requestFullscreen?.().catch(()=>toast('当前浏览器不支持全屏，可横屏体验'));else document.exitFullscreen?.();}
-  if(action==='quick-rules')openModal('<div class="eyebrow">SICHUAN MAHJONG</div><h2>这一桌，怎么玩？</h2><div class="inline-rules">① 换三张：选三张同花色牌，同时交换后再定缺。缺门清空才能碰、杠、胡。<br>② 不吃牌，支持碰牌、直杠和暗杠。<br>③ 四组顺刻加一对将，或七对，即可胡牌。<br>④ 一家胡了继续打，三家胡牌或牌墙摸尽结束。<br>⑤ 点击选牌，再点一次打出，25 秒自动处理。</div><p>支持将对、带幺九、龙七对等牌型，以及流局查大叫、查花猪和退税。详细计分可在大厅「玩法指南」中查看。</p><div class="modal-actions"><button class="primary-button" data-action="close-modal">知道了，继续玩</button></div>');
+  if(action==='quick-rules')openModal(tableGuide(game?.rules));
   if(action==='result')showResult();
   if(action==='waits'){
     if(!game||game.online||game.phase!=='discard'||game.current!==0){toast('轮到你出牌时可查看听牌');return;}
@@ -367,12 +367,14 @@ async function onlineAction(action){
   catch(e){if(action==='queue')queued=false;onlineError=e.message;toast(e.message);}finally{onlineBusy=false;render();}
 }
 async function onlineGame(action,payload={}){
-  if(onlineBusy)return;onlineBusy=true;
+  const serial=action!=='auto';
+  if(serial&&onlineBusy)return;
+  if(serial)onlineBusy=true;
   try{
     if(online.status!=='connected')throw new Error('正在重连，恢复后请重新操作');
     await online.request('game.'+action,payload);sound(action==='hu'?'win':'tile');
   }
-  catch(e){toast(e.message);}finally{onlineBusy=false;}
+  catch(e){toast(e.message);}finally{if(serial)onlineBusy=false;}
 }
 online.addEventListener('state',e=>{
   const r=e.detail,wasOnline=!!game?.online;
